@@ -58,8 +58,8 @@ class XSSScanner:
         self.results['start_time'] = datetime.now().isoformat()
         
         try:
-            # Phase 0: Collect URLs from Wayback
-            print("[Phase 1/4] Collecting URLs from Wayback Machine...")
+            # Phase 0: Collect URLs from Wayback Machine (CDX + tool) and GAU
+            print("[Phase 1/4] Collecting URLs from Wayback Machine (CDX + tool) and GAU...")
             urls = await self.url_processor.fetch_wayback_urls()
             
             if not urls:
@@ -76,7 +76,7 @@ class XSSScanner:
                 
                 if waf_info['detected']:
                     print(f"[!] WAF Detected: {waf_info['type']}")
-                    print(f"[*] Confidence: {waf_info['confidence']}")
+                    #print(f"[*] Confidence: {waf_info['confidence']}")
                 else:
                     print("[+] No WAF detected")
             

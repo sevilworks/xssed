@@ -6,7 +6,11 @@ Filters out non-reflecting URLs before expensive browser verification
 import asyncio
 import httpx
 from typing import List, Dict, Set
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse, parse_qs
+from colorama import Fore, Style, init
+
+# Initialize colorama
+init(autoreset=True)
 
 
 class ReflectionDetector:
@@ -61,6 +65,9 @@ class ReflectionDetector:
                             **url_data,
                             'reflection_evidence': result['evidence']
                         })
+
+                        # Print URL with highlighted parameter in yellow
+                        self._print_reflected_url(url_data)
             
             print()  # New line after progress
             return reflected
@@ -75,11 +82,15 @@ class ReflectionDetector:
             'evidence': [],
             'blocked': False
         }
-        
+
         try:
+            # Skip .js files as they are static and cannot execute JavaScript
+            parsed_url = urlparse(url_data['url'])
+            if '.js' in parsed_url.path:
+                return result
+
             # Skip if domain is known to be blocked
-            from urllib.parse import urlparse
-            domain = urlparse(url_data['url']).netloc
+            domain = parsed_url.netloc
             if domain in self.blocked_domains:
                 return result
             
@@ -150,7 +161,44 @@ class ReflectionDetector:
             print(f"\n[!] Reflection check error: {e}")
         
         return result
-    
+
+    def _print_reflected_url(self, url_data: Dict):
+        """Print URL with highlighted parameter in yellow"""
+        try:
+            url = url_data['url']
+            param_name = url_data['parameter']
+
+            # Parse URL to highlight the parameter
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query)
+
+            # Rebuild query string with highlighted parameter
+            query_parts = []
+            for p_name, p_values in params.items():
+                if p_name == param_name:
+                    # Yellow highlighting for parameter name and value
+                    highlighted_name = f"{Fore.YELLOW}{p_name}{Style.RESET_ALL}"
+                    if p_values:
+                        highlighted_value = f"{Fore.YELLOW}{p_values[0]}{Style.RESET_ALL}"
+                        query_parts.append(f"{highlighted_name}={highlighted_value}")
+                    else:
+                        query_parts.append(f"{highlighted_name}")
+                else:
+                    if p_values:
+                        query_parts.append(f"{p_name}={p_values[0]}")
+                    else:
+                        query_parts.append(p_name)
+
+            query_string = '&'.join(query_parts)
+            display_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{query_string}"
+
+            # Print with reflection indicator
+            print(f"\n[✓] REFLECTED: {display_url}")
+
+        except Exception as e:
+            # Fallback to simple print if parsing fails
+            print(f"\n[✓] REFLECTED: {url_data['url']} (param: {url_data['parameter']})")
+
     def _is_blocked(self, response: httpx.Response) -> bool:
         """Detect if request was blocked by WAF"""
         # Status code indicators

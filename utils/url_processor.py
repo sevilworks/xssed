@@ -5,6 +5,7 @@ Handles URL collection, parsing, and payload injection
 
 import asyncio
 import subprocess
+import aiohttp
 from typing import List, Dict, Set
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, quote
 
@@ -21,20 +22,44 @@ class URLProcessor:
         #    self.target = f"https://{target}"
     
     async def fetch_wayback_urls(self) -> List[str]:
-        """Fetch URLs from Wayback Machine using waybackurls tool"""
-        print(f"[*] Fetching URLs for {self.target} from Wayback Machine...")
+        """Fetch URLs from Wayback Machine (tool + CDX API) and GAU, merge and deduplicate"""
+        print(f"[*] Fetching URLs for {self.target} ...")
 
         try:
-            # Run waybackurls subprocess
+            # Run all three methods concurrently
             loop = asyncio.get_event_loop()
-            urls = await loop.run_in_executor(
-                None,
-                self._fetch_wayback_sync
+            wayback_tool_task = loop.run_in_executor(None, self._fetch_wayback_sync)
+            cdx_task = self._fetch_cdx_async()
+            gau_task = loop.run_in_executor(None, self._fetch_gau_sync)
+
+            wayback_tool_urls, cdx_urls, gau_urls = await asyncio.gather(
+                wayback_tool_task, cdx_task, gau_task, return_exceptions=True
             )
+
+            # Handle exceptions and combine results
+            all_urls = set()
+
+            # Process wayback tool results
+            if isinstance(wayback_tool_urls, Exception):
+                print(f"[!] Wayback tool error: {wayback_tool_urls}")
+            else:
+                all_urls.update(wayback_tool_urls)
+
+            # Process CDX results
+            if isinstance(cdx_urls, Exception):
+                print(f"[!] CDX API error: {cdx_urls}")
+            else:
+                all_urls.update(cdx_urls)
+
+            # Process GAU results
+            if isinstance(gau_urls, Exception):
+                print(f"[!] GAU tool error: {gau_urls}")
+            else:
+                all_urls.update(gau_urls)
 
             # Filter URLs with parameters
             urls_with_params = [
-                url for url in urls
+                url for url in all_urls
                 if '?' in url and '=' in url
             ]
 
@@ -45,7 +70,7 @@ class URLProcessor:
             return list(unique_urls)[:self.max_urls]
 
         except Exception as e:
-            print(f"[!] Error fetching Wayback URLs: {e}")
+            print(f"[!] Error fetching URLs: {e}")
             return []
 
     def _fetch_wayback_sync(self) -> List[str]:
@@ -84,7 +109,88 @@ class URLProcessor:
             print(f"[!] Wayback tool error: {e}")
 
         return list(urls)
-    
+
+    def _fetch_gau_sync(self) -> List[str]:
+        """Synchronous GAU fetch using gau tool"""
+        urls = set()
+
+        try:
+            # Invoke gau tool
+            result = subprocess.run(
+                ['gau', self.target],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                # Parse stdout for URLs
+                output_lines = result.stdout.strip().split('\n')
+                for line in output_lines:
+                    line = line.strip()
+                    if line and line.startswith(('http://', 'https://')):
+                        # Only keep URLs with parameters
+                        if '?' in line and '=' in line:
+                            urls.add(line)
+
+                        # Respect max limit
+                        if len(urls) >= self.max_urls * 2:  # Fetch more for deduplication
+                            break
+            else:
+                print(f"[!] gau tool failed: {result.stderr}")
+
+        except subprocess.TimeoutExpired:
+            print("[!] gau tool timed out")
+        except FileNotFoundError:
+            print("[!] gau tool not found. Please install it from https://github.com/lc/gau")
+        except Exception as e:
+            print(f"[!] GAU tool error: {e}")
+
+        return list(urls)
+
+    async def _fetch_cdx_async(self) -> List[str]:
+        """Fetch URLs from Wayback Machine CDX API directly"""
+        urls = set()
+
+        # Set timeout to 60 seconds for slow responses
+        #timeout = aiohttp.ClientTimeout(total=500)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Build CDX API URL
+                cdx_url = f"https://web.archive.org/cdx/search/cdx?url=*.{self.target}/*&collapse=urlkey&output=text&fl=original"
+
+                print(f"[*] Querying CDX API: {cdx_url}")
+
+                async with session.get(cdx_url) as response:
+                    if response.status == 200:
+                        # Read response content
+                        content = await response.text()
+
+                        # Parse URLs from response
+                        lines = content.strip().split('\n')
+
+                        for line in lines:
+                            line = line.strip()
+                            if line and line.startswith(('http://', 'https://')):
+                                # Only keep URLs with parameters
+                                if '?' in line and '=' in line:
+                                    urls.add(line)
+
+                                # Respect max limit
+                                if len(urls) >= self.max_urls * 2:  # Fetch more for deduplication
+                                    break
+                    else:
+                        print(f"[!] CDX API returned status code {response.status}")
+
+        except asyncio.TimeoutError:
+            print("[!] CDX API request timed out after 60 seconds")
+        except aiohttp.ClientError as e:
+            print(f"[!] CDX API client error: {e}")
+        except Exception as e:
+            print(f"[!] CDX API unexpected error: {e}")
+
+        return list(urls)
+
     def _deduplicate_urls(self, urls: List[str]) -> Set[str]:
         """Deduplicate URLs by structure, keeping unique parameter combinations"""
         seen_structures = set()
