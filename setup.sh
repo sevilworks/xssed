@@ -41,6 +41,8 @@ echo "[*] Installing Playwright browsers..."
 sudo python3 -m pip install --upgrade --force-reinstall playwright --break-system-packages 
 playwright install chromium
 
+pipx run --spec playwright playwright install chromium
+
 # Make main script executable
 chmod +x xssed.py
 
