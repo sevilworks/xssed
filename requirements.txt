@@ -1,0 +1,17 @@
+# Core HTTP and async
+httpx
+asyncio>=3.4.3
+aiofiles>=23.2.1
+
+# Browser automation (Playwright)
+playwright>=1.40.0
+
+# URL collection (waybackurls tool required, install separately)
+# waybackpy>=3.0.6  # No longer needed, using waybackurls CLI tool
+
+# HTML parsing
+beautifulsoup4>=4.12.0
+lxml>=4.9.3
+
+# URL parsing
+urllib3>=2.1.0
